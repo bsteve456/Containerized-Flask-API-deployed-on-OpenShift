@@ -2,8 +2,9 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: task-manager-api
+  namespace: duma999-dev
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: task-manager-api
@@ -12,18 +13,26 @@ spec:
       labels:
         app: task-manager-api
     spec:
+      imagePullSecrets:
+      - name: ghcr-secret
       containers:
       - name: flask
-        image: task-manager-api:1.0
+        image: ghcr.io/bsteve456/task-manager-api:2.0
+        imagePullPolicy: Always
         ports:
         - containerPort: 5000
+        command:
+        - gunicorn
+        - --bind
+        - 0.0.0.0:5000
+        - --workers
+        - "1"
+        - app.main:app
         env:
         - name: FLASK_APP
           value: "app/main.py"
         - name: PYTHONUNBUFFERED
           value: "1"
-        - name: DATABASE_URL
-          value: "postgresql://postgres:postgres123@postgres:5432/task_manager"
         resources:
           requests:
             memory: "128Mi"
