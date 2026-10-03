@@ -1,0 +1,15 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: task-manager-pipeline-run-1
+spec:
+  pipelineRef:
+    name: task-manager-pipeline
+  params:
+  - name: git-revision
+    value: main
+  - name: registry
+    value: quay.io/bsteve456
+  workspaces:
+  - name: source
+    emptyDir: {}
