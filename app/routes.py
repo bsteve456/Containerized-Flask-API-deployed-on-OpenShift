@@ -1,5 +1,5 @@
 from flask import jsonify, request
-from app.main import app
+from app import app
 from app.models import tasks_db, Task
 
 next_id = 1
