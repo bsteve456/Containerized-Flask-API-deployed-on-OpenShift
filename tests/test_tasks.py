@@ -1,44 +1,41 @@
 import pytest
-from app import app
-
+from app import app, db
+from app.models import Task
 
 @pytest.fixture
 def client():
-    """Create a test client for the Flask app"""
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
     app.config['TESTING'] = True
-    with app.test_client() as client:
-        yield client
-
+    
+    with app.app_context():
+        db.create_all()
+        yield app.test_client()
+        db.session.remove()
+        db.drop_all()
 
 def test_health(client):
-    """Test GET /health returns 200"""
     response = client.get('/health')
     assert response.status_code == 200
-
+    assert response.json['status'] == 'healthy'
 
 def test_get_tasks_empty(client):
-    """Test GET /tasks returns empty list initially"""
     response = client.get('/tasks')
     assert response.status_code == 200
     assert response.json == []
 
-
 def test_create_task(client):
-    """Test POST /tasks creates a new task"""
-    new_task = {'title': 'Buy milk'}
-    response = client.post('/tasks', json=new_task)
+    response = client.post('/tasks', json={
+        'title': 'Test Task',
+        'description': 'A test task'
+    })
     assert response.status_code == 201
-    assert 'id' in response.json
-    assert response.json['title'] == 'Buy milk'
-
+    assert response.json['title'] == 'Test Task'
+    assert response.json['id'] == 1
 
 def test_delete_task(client):
-    """Test DELETE /tasks/{id} deletes a task"""
-    # First, create a task
-    new_task = {'title': 'Buy milk'}
-    create_response = client.post('/tasks', json=new_task)
-    task_id = create_response.json['id']
+    client.post('/tasks', json={'title': 'Task to Delete'})
+    response = client.delete('/tasks/1')
+    assert response.status_code == 204
     
-    # Then delete it
-    delete_response = client.delete(f'/tasks/{task_id}')
-    assert delete_response.status_code == 204
+    get_response = client.get('/tasks')
+    assert len(get_response.json) == 0
