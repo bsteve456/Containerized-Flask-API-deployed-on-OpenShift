@@ -1,0 +1,6 @@
+Flask==2.3.0
+Flask-SQLAlchemy==3.0.0
+pytest==7.0.0
+python-dotenv==0.21.0
+psycopg2-binary==2.9.0    # PostgreSQL driver (if using PostgreSQL)
+gunicorn==21.0.0          # Production web server (for OpenShift)
