@@ -15,22 +15,31 @@ This project demonstrates a complete DevOps workflow:
 ## 🏗️ Architecture
 
 ```
-┌─────────────┐
-│   GitHub    │  Source code repository
-└──────┬──────┘
-       │
-       ├──→ Tekton Pipeline (CI/CD)
-       │    ├─ git-clone: Clone repo
-       │    ├─ run-tests: Execute pytest
-       │    └─ build-image: Build & push container
-       │
-       └──→ OpenShift Cluster
-            ├─ Flask Pod (x2 replicas)
-            │  └─ Gunicorn server (4 workers)
-            ├─ PostgreSQL Pod
-            │  └─ Persistent storage
-            └─ Service (LoadBalancer)
-               └─ External access to API
+┌─────────────────────────────────────────────────────┐
+│   GitHub Repository                                 │
+│   https://github.com/bsteve456/Containerized-...   │
+└──────────────────┬──────────────────────────────────┘
+                   │
+              ┌────▼────┐
+              │ Podman   │  Build & Push
+              └────┬────┘
+                   │
+         ┌─────────▼──────────┐
+         │  GitHub Container  │  Image Storage
+         │  Registry (ghcr.io)│
+         └─────────┬──────────┘
+                   │
+         ┌─────────▼──────────────────────┐
+         │  OpenShift OKD Sandbox Cluster │
+         │  duma999-dev namespace         │
+         │                                │
+         │  ├─ Flask Pod (1 replica)      │
+         │  │  └─ Gunicorn (1 worker)    │
+         │  │     └─ SQLite (in-memory)   │
+         │  │                            │
+         │  └─ Service (ClusterIP)        │
+         │     └─ Port 5000              │
+         └────────────────────────────────┘
 ```
 
 ## 🛠️ Technology Stack
@@ -40,16 +49,11 @@ This project demonstrates a complete DevOps workflow:
 | **Runtime** | Python | 3.9 |
 | **Framework** | Flask | 3.0.0 |
 | **ORM** | SQLAlchemy | 2.0.54 |
-| **Database** | PostgreSQL | 13 |
+| **Database** | SQLite (in-memory) | 3.x |
 | **Web Server** | Gunicorn | 21.0.0 |
-| **Container** | Docker/Podman | 5.4.2+ |
-| **Orchestration** | Kubernetes/OpenShift | 1.27+ |
-| **CI/CD** | Tekton | 0.40+ |
-| **Testing** | pytest | 7.0.0 |
-
-## 📁 Project Structure
-
-```
+| **Container** | Podman | 5.4.2 |
+| **Orchestration** | OpenShift/Kubernetes | 4.14+ |
+| **Registry** | GitHub Container Registry | ghcr.io |
 Containerized-Flask-API-deployed-on-OpenShift/
 ├── app/
 │   ├── __init__.py              # Flask app factory, database init
@@ -236,160 +240,218 @@ podman tag task-manager-api:2.0 quay.io/bsteve456/task-manager-api:2.0
 podman push quay.io/bsteve456/task-manager-api:2.0
 ```
 
-## ☸️ Kubernetes Deployment
+## ☸️ Kubernetes Deployment to OpenShift
 
 ### Prerequisites
 
-1. Connected OpenShift cluster with `oc` CLI configured
-2. Container image pushed to accessible registry
+1. OpenShift cluster access (tested on OKD Sandbox)
+2. `oc` CLI configured with cluster credentials
+3. Container image pushed to GitHub Container Registry (ghcr.io)
+4. GitHub PAT token for registry authentication
 
-### Deploy to OpenShift
+### Step 1: Authenticate to OpenShift
 
 ```bash
-# Create project/namespace
-oc new-project task-manager
+# Get login token from OpenShift console
+oc login --token=<your-token> --server=https://api.rm1.0a51.p1.openshiftapps.com:6443
 
-# Deploy PostgreSQL database
-oc apply -f kubernetes/postgres.yaml
-
-# Wait for PostgreSQL pod to be ready
-oc wait --for=condition=ready pod -l app=postgres --timeout=300s
-
-# Deploy Flask application
-oc apply -f kubernetes/deployment.yaml
-oc apply -f kubernetes/service.yaml
-oc apply -f kubernetes/configmap.yaml
-
-# Verify pods running
-oc get pods -w
-
-# Get service details
-oc get svc task-manager-api
+# Verify authentication
+oc current-context
 ```
 
-### Verify Deployment
+### Step 2: Create Registry Secret (for private images)
+
+```bash
+# Create secret for GitHub Container Registry
+oc create secret docker-registry ghcr-secret \
+  --docker-server=ghcr.io \
+  --docker-username=<github-username> \
+  --docker-password=<github-pat-token> \
+  --docker-email=<your-email> \
+  -n duma999-dev
+
+# Link secret to default service account
+oc patch serviceaccount default -p '{"imagePullSecrets": [{"name": "ghcr-secret"}]}' -n duma999-dev
+```
+
+### Step 3: Deploy to OpenShift
+
+```bash
+# Deploy Flask application to duma999-dev namespace
+oc apply -f kubernetes/configmap.yaml -n duma999-dev
+oc apply -f kubernetes/deployment.yaml -n duma999-dev
+oc apply -f kubernetes/service.yaml -n duma999-dev
+
+# Verify pods running
+oc get pods -n duma999-dev -w
+
+# Get pod name
+oc get pods -n duma999-dev
+```
+
+### Step 4: Verify Deployment
 
 ```bash
 # Check deployment status
-oc get deployments
-
-# Check running pods
-oc get pods
+oc get deployment task-manager-api -n duma999-dev
+oc get pods -n duma999-dev
+oc describe pod <pod-name> -n duma999-dev
 
 # View logs from Flask pod
-oc logs -f deployment/task-manager-api
+oc logs -f deployment/task-manager-api -n duma999-dev
+```
 
-# Test API through port-forward
-oc port-forward svc/task-manager-api 5000:5000
+### Step 5: Test API Endpoints
 
-# In another terminal:
+```bash
+# Setup port-forward (in one terminal)
+oc port-forward svc/task-manager-api-service 5000:5000 -n duma999-dev
+
+# In another terminal, test endpoints:
+
+# Health check
 curl http://localhost:5000/health
+# Response: {"status":"healthy"}
+
+# Get all tasks (empty initially)
+curl http://localhost:5000/tasks
+# Response: []
+
+# Create a task
+curl -X POST http://localhost:5000/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Deploy to OpenShift","description":"Successfully running on OKD Sandbox!"}'
+# Response: {"id":1,"title":"Deploy to OpenShift",...}
+
+# Get all tasks (now with your task)
+curl http://localhost:5000/tasks
+# Response: [{"id":1,...}]
+
+# Delete a task
+curl -X DELETE http://localhost:5000/tasks/1
+# Response: 204 No Content
 ```
 
-### Access Service
+## 🔄 CI/CD Pipeline (Tekton)
 
-If service is LoadBalancer type:
-```bash
-# Get external IP
-oc get svc task-manager-api
-# Access via: http://<EXTERNAL-IP>:5000
-```
+### Overview
 
-If service is ClusterIP only:
-```bash
-# Use port-forward
-oc port-forward svc/task-manager-api 5000:5000
-# Access via: http://localhost:5000
-```
-
-## 🔄 Tekton CI/CD Pipeline
-
-### Pipeline Components
-
-The Tekton pipeline consists of 3 tasks:
+A Tekton pipeline is included for automated build and deployment. Pipeline components:
 
 1. **git-clone**: Clones repository from GitHub
-2. **run-tests**: Runs pytest to validate code
-3. **build-image**: Builds container image and pushes to registry
+2. **run-tests**: Runs pytest to validate code  
+3. **build-image**: Builds container and pushes to ghcr.io
 
-### Deploy Pipeline
+### Deploy Pipeline (Optional)
 
 ```bash
-# Apply pipeline and tasks
-oc apply -f pipeline/pipeline.yaml
+# Prerequisites:
+# - Tekton installed on cluster
+# - GitHub PAT token for accessing repo
+# - ghcr.io credentials configured
 
-# Create PipelineRun to execute
-oc apply -f pipeline/pipelinerun.yaml
+# Apply pipeline definitions
+oc apply -f pipeline/pipeline.yaml -n duma999-dev
 
-# Watch pipeline execution
-oc logs -f $(oc get pipelinerun -o jsonpath='{.items[0].metadata.name}')
+# Create PipelineRun
+oc apply -f pipeline/pipelinerun.yaml -n duma999-dev
 
-# View PipelineRun status
-oc get pipelinerun
-oc describe pipelinerun <pipeline-run-name>
+# Monitor execution
+oc logs -f $(oc get pipelinerun -o jsonpath='{.items[0].metadata.name}') -n duma999-dev
 ```
 
-### Customize Pipeline
-
-Edit `pipeline/pipeline.yaml` to:
-- Change registry URL (update `quay.io/bsteve456` to your registry)
-- Adjust git branch parameter
-- Add additional tasks (e.g., code scanning, security checks)
+**Note**: Pipeline deployment requires Tekton to be installed and properly configured with registry credentials.
 
 ## 📊 Database Setup
 
-### PostgreSQL Container
+### Current Implementation: In-Memory SQLite
 
-The deployment includes PostgreSQL 13 with:
-- **Database**: `task_manager`
-- **User**: `postgres`
-- **Password**: `postgres123`
-- **Port**: 5432
+The deployment uses **SQLite in-memory database** (`sqlite:///:memory:`) for the OKD Sandbox:
 
-Connection string:
-```
-postgresql://postgres:postgres123@postgres:5432/task_manager
-```
+**Why in-memory?**
+- OKD Sandbox doesn't support persistent volumes easily
+- Container filesystem is read-only
+- Single worker Gunicorn avoids data isolation issues
+- Suitable for demo/testing purposes
 
 ### Database Initialization
 
-Tables are automatically created on app startup via SQLAlchemy:
-- `task` table with columns: id, title, description, completed, created_at
+Tables are automatically created on Flask app startup via SQLAlchemy in `app/__init__.py`:
 
-### Data Persistence
-
-PostgreSQL deployment uses `emptyDir` volume for demo purposes. For production:
-
-```yaml
-# Replace in kubernetes/postgres.yaml for persistence:
-volumes:
-- name: postgres-storage
-  persistentVolumeClaim:
-    claimName: postgres-pvc
+```python
+try:
+    with app.app_context():
+        db.create_all()
+except Exception as e:
+    print(f"[WARNING] Could not initialize database: {e}")
 ```
 
-## 🌐 OpenShift Integration
+Task table schema:
+```sql
+CREATE TABLE task (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title VARCHAR(255) NOT NULL,
+  description VARCHAR(500),
+  completed BOOLEAN DEFAULT FALSE,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+```
 
-### Setup Tekton Webhook (Optional)
+### Production Database
 
-Automatically trigger pipeline on GitHub push:
+For production deployments, use PostgreSQL:
 
 ```bash
-# Get EventListener route
-oc get route el-github-listener
+# Deploy PostgreSQL
+oc apply -f kubernetes/postgres.yaml -n duma999-dev
 
-# Add webhook to GitHub repo:
-# Settings → Webhooks → Add webhook
-# Payload URL: https://<el-route>/
-# Events: Push events
+# Set DATABASE_URL environment variable
+oc set env deployment/task-manager-api \
+  DATABASE_URL="postgresql://postgres:postgres123@postgres:5432/task_manager" \
+  -n duma999-dev
+
+# Restart deployment
+oc rollout restart deployment/task-manager-api -n duma999-dev
 ```
 
-### Monitor Pipeline in OpenShift Console
+## 🌐 OpenShift Sandbox Details
 
-1. Login to OpenShift console (URL from cluster)
-2. Navigate to Pipelines → Pipelines
-3. Select `task-manager-pipeline`
-4. View execution history and logs
+### Cluster Information
+
+- **Cluster**: OKD Sandbox (Red Hat Developer Sandbox)
+- **API Server**: https://api.rm1.0a51.p1.openshiftapps.com:6443
+- **Namespace**: `duma999-dev`
+- **Status**: ✅ Active and tested
+
+### Deployment Configuration
+
+- **Replicas**: 1 (in-memory SQLite requires single instance)
+- **Gunicorn Workers**: 1 (multiple workers cause data isolation)
+- **Service Type**: ClusterIP (LoadBalancer quota exceeded in sandbox)
+- **Image Registry**: GitHub Container Registry (ghcr.io)
+- **Image Pull Secret**: `ghcr-secret` (required for private registry)
+
+### Useful Commands
+
+```bash
+# View all resources
+oc get all -n duma999-dev
+
+# Watch pod status
+oc get pods -n duma999-dev -w
+
+# Stream logs
+oc logs -f deployment/task-manager-api -n duma999-dev
+
+# Exec into pod
+oc exec -it <pod-name> -n duma999-dev -- /bin/bash
+
+# Port-forward for local testing
+oc port-forward svc/task-manager-api-service 5000:5000 -n duma999-dev
+
+# Scale replicas (for PostgreSQL deployments)
+oc scale deployment task-manager-api --replicas=3 -n duma999-dev
+```
 
 ## 🐛 Troubleshooting
 
