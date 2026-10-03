@@ -1,0 +1,107 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: git-clone
+spec:
+  params:
+  - name: revision
+    type: string
+    default: main
+  workspaces:
+  - name: source
+  steps:
+  - name: clone
+    image: alpine/git:latest
+    script: |
+      git clone https://github.com/bsteve456/Containerized-Flask-API-deployed-on-OpenShift.git /workspace/source
+      cd /workspace/source
+      git checkout $(params.revision)
+
+---
+
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: run-tests
+spec:
+  workspaces:
+  - name: source
+  steps:
+  - name: test
+    image: python:3.9
+    script: |
+      cd /workspace/source
+      pip install -r requirements.txt
+      PYTHONPATH=. pytest
+
+---
+
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: build-image
+spec:
+  params:
+  - name: image-name
+    type: string
+    default: task-manager-api:latest
+  - name: registry
+    type: string
+    default: quay.io/bsteve456
+  workspaces:
+  - name: source
+  steps:
+  - name: build-and-push
+    image: quay.io/buildah/stable
+    script: |
+      cd /workspace/source
+      buildah build -t $(params.registry)/$(params.image-name) .
+      buildah push $(params.registry)/$(params.image-name) docker://$(params.registry)/$(params.image-name)
+
+---
+
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: task-manager-pipeline
+spec:
+  params:
+  - name: git-revision
+    type: string
+    default: main
+  - name: registry
+    type: string
+    default: quay.io/bsteve456
+  workspaces:
+  - name: source
+  tasks:
+  - name: clone-repo
+    taskRef:
+      name: git-clone
+    params:
+    - name: revision
+      value: $(params.git-revision)
+    workspaces:
+    - name: source
+      workspace: source
+
+  - name: test-code
+    taskRef:
+      name: run-tests
+    runAfter:
+    - clone-repo
+    workspaces:
+    - name: source
+      workspace: source
+
+  - name: build-push-image
+    taskRef:
+      name: build-image
+    runAfter:
+    - test-code
+    params:
+    - name: registry
+      value: $(params.registry)
+    workspaces:
+    - name: source
+      workspace: source
