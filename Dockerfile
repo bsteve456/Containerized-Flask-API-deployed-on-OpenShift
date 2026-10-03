@@ -19,6 +19,7 @@ EXPOSE 5000
 # 7. Environment variables
 ENV FLASK_APP=app/main.py
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
 
 # 8. When container starts, run Flask app
 CMD ["python", "app/main.py"]
