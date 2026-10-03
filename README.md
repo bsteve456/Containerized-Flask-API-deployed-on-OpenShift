@@ -63,7 +63,7 @@ Containerized-Flask-API-deployed-on-OpenShift/
 ├── tests/
 │   └── test_tasks.py            # Unit tests (4 tests, all passing)
 ├── kubernetes/
-│   ├── deployment.yaml          # Flask Deployment (2 replicas)
+│   ├── deployment.yaml          # Flask Deployment (1 replica)
 │   ├── service.yaml             # LoadBalancer Service
 │   ├── configmap.yaml           # Configuration settings
 │   └── postgres.yaml            # PostgreSQL Deployment + Service
@@ -503,20 +503,19 @@ oc get pipelinerun -o yaml <pipeline-run-name>
 
 ### Current Configuration
 
-- **Flask Replicas**: 2 (for high availability)
-- **Gunicorn Workers**: 4 per pod
-- **Max Requests**: ~8 concurrent (2 pods × 4 workers)
+- **Flask Replicas**: 1 (required for in-memory SQLite consistency)
+- **Gunicorn Workers**: 1 per pod
+- **Max Requests**: ~1 concurrent write path in current sandbox setup
 - **Resource Limits**: 256Mi memory, 500m CPU per pod
 
 ### Scale Deployment
 
 ```bash
-# Increase replicas
-oc scale deployment task-manager-api --replicas=5
+# Current sandbox mode must stay at 1 replica and 1 worker
+oc scale deployment task-manager-api --replicas=1 -n duma999-dev
 
-# Or edit deployment
-oc edit deployment task-manager-api
-# Change: replicas: 5
+# For true scaling, first migrate to PostgreSQL, then increase replicas
+oc scale deployment task-manager-api --replicas=3 -n duma999-dev
 ```
 
 ### Monitor Resources
